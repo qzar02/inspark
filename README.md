@@ -21,7 +21,7 @@ Para implementar essa solução será aplicado o conceito de Mock nas funções 
 ## Como usar
 
 ```python
-from refactoring import Refactoring
+from inspark import Refactoring
 refact = Refactoring()
 refact.mock()
 
