@@ -1,9 +1,10 @@
 from pyspark.sql import functions as f
 from pyspark.sql.dataframe import DataFrame
+from pyspark.sql.column import Column
 from pyspark.sql.group import GroupedData
 from pyspark.sql.readwriter import DataFrameReader, DataFrameWriter
 from pyspark.sql import SparkSession
-
+import re
 spark = (
         SparkSession
         .builder
@@ -25,8 +26,9 @@ def format_params(args, kwargs={}):
     params = []
 
     for a in args:
-
-        if isinstance(a, DataFrame):
+        if isinstance(a, Column):
+            _arg = str(a._jc.toString().encode('utf8'))
+        elif isinstance(a, DataFrame):
             _arg = Refactoring.get_assign_name(a)
         elif isinstance(a, str):
             _arg = f"'{a}'"
@@ -44,14 +46,14 @@ class DataFrameMock:
 
     def __getitem__(self, name):
         if name not in self.columns:
-            df = self.o_withColumn(name, f.lit(name.upper()))
+            df = self.o_withColumn(name, f.lit(str(name).upper()))
             return df.o_getitem(name)
         else:
             return self.o_getitem(name)
 
     def __getattr__(self, name):
         if name not in self.columns:
-            df = self.o_withColumn(name, f.lit(name.upper()))
+            df = self.o_withColumn(name, f.lit(str(name).upper()))
             return df.o_getattr(name)
         else:
             return self.o_getattr(name)
@@ -106,6 +108,58 @@ class DataFrameWriterMock:
             format_params(args, kwargs))
 
 
+class GraphCutBranches:
+
+    def __init__(self, graph):
+        self.graph = graph
+        self.ends = []
+        for s in self.graph.keys():
+            for t in self.graph[s]:
+                self.ends.append(t)
+
+        targets = []
+        for t in self.graph.values():
+            targets.extend(t)
+        targets = set(targets)
+
+        self.starts = []
+        for s in self.graph.keys():
+            if s not in targets:
+                self.starts.append(s)
+
+    def _cut_branches(self, node, parent=None):
+        if self.ends.count(node) > 1 or (parent and len(self.graph[parent]) > 1):
+            self.cuts.append(self.cluster)
+            self.cluster = []
+
+        self.cluster.append(node)
+
+        for edge in self.graph[node]:
+            if edge not in self.resolved:
+                self._cut_branches(edge, node)
+
+        self.resolved.append(node)
+
+    def cut_branches(self):
+        self.resolved = []
+        self.cuts = []
+        for start in sorted(self.starts):
+            self.cluster = []
+            self._cut_branches(start)
+            self.cuts.append(self.cluster)
+
+    def sorted(self):
+        return sorted(self.cuts, key=lambda n: int(n[-1][2:-1]))
+
+
+class Node:
+    def __init__(self, assign_name, current_name, fn_name, params):
+        self.assign_name = assign_name
+        self.current_name = current_name
+        self.fn_name = fn_name
+        self.params = params
+
+
 class Refactoring:
 
     # Contador de operações realizadas.
@@ -127,20 +181,14 @@ class Refactoring:
 
     @staticmethod
     def new_line(assign_name, current_name, fn_name, params):
-        sub_params = (
-            params
-            .replace('Column<b', '')
-            .replace("'>", "'")
-        )
-
         Refactoring.output_nodes.append(
-            (assign_name, current_name or '', fn_name, sub_params)
+            Node(assign_name, current_name, fn_name, params)
         )
 
         Refactoring.output_text += (
-            f'{assign_name} = {current_name}.{fn_name}{sub_params}\n'
+            f'{assign_name} = {current_name}.{fn_name}{params}\n'
             if current_name else
-            f'{assign_name} = {fn_name}{sub_params}\n'
+            f'{assign_name} = {fn_name}{params}\n'
         )
 
     @staticmethod
@@ -228,3 +276,55 @@ class Refactoring:
 
         f.o_broadcast = f.broadcast
         f.broadcast = functions_broadcast_mock
+
+    def _graph(self):
+        graph = {}
+        df_params = re.compile(r'(df\d+_)')
+
+        for node in Refactoring.output_nodes:
+            graph[node.assign_name] = []
+
+        for node in Refactoring.output_nodes:
+            if node.current_name:
+                graph[node.current_name].append(node.assign_name)
+
+            for df_name in df_params.findall(node.params):
+                graph[df_name].append(node.assign_name)
+
+        return GraphCutBranches(graph)
+
+    def print_line_header(self, assign_name, current_name, fn_name, params):
+        print(
+            f'{assign_name} = (\n' +
+            (
+                f'  {current_name}.{fn_name}{params}'
+                if current_name else
+                f'  {fn_name}{params}'
+            )
+        )
+
+    def nodes(self):
+        return dict([(node.assign_name, node) for node in Refactoring.output_nodes])
+
+    def optimize_code(self):
+        self.graph = self._graph()
+        self.graph.cut_branches()
+
+        nodes = self.nodes()
+
+        for cluster in self.graph.sorted():
+
+            first_node = nodes[cluster[0]]
+
+            self.print_line_header(
+                assign_name=cluster[-1],
+                current_name=first_node.current_name,
+                fn_name=first_node.fn_name,
+                params=first_node.params
+            )
+
+            for node_key in cluster[1:]:
+                node = nodes[node_key]
+                print(f'  .{node.fn_name}{node.params}')
+
+            print(')')

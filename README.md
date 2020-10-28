@@ -30,7 +30,6 @@ refact.mock()
 print(refact.output_text)
 ```
 
-
 ## Próximos passos
 
 O próximo passo na melhoria da ferramenta é implementar uma otimização da sequência de comandos retornando menos variáveis de dataframe.
