@@ -153,11 +153,12 @@ class GraphCutBranches:
 
 
 class Node:
-    def __init__(self, assign_name, current_name, fn_name, params):
+    def __init__(self, assign_name, current_name, fn_name, params, method=False):
         self.assign_name = assign_name
         self.current_name = current_name
         self.fn_name = fn_name
         self.params = params
+        self.method = method
 
 
 class Refactoring:
@@ -172,6 +173,12 @@ class Refactoring:
     output_nodes = []
 
     @staticmethod
+    def clear():
+        Refactoring.output_text = ''
+        Refactoring.output_nodes = []
+        Refactoring.counter_op = -1
+
+    @staticmethod
     def next_assign_name():
         """
         Incrementa o contador de operações e retorna seu valor
@@ -180,16 +187,24 @@ class Refactoring:
         return f'df{Refactoring.counter_op}_'
 
     @staticmethod
-    def new_line(assign_name, current_name, fn_name, params):
+    def new_line(assign_name, current_name, fn_name, params, method=False):
         Refactoring.output_nodes.append(
-            Node(assign_name, current_name, fn_name, params)
+            Node(assign_name, current_name, fn_name, params, method)
         )
+        if method:
 
-        Refactoring.output_text += (
-            f'{assign_name} = {current_name}.{fn_name}{params}\n'
-            if current_name else
-            f'{assign_name} = {fn_name}{params}\n'
-        )
+            Refactoring.output_text += (
+                f'{assign_name} = {fn_name}({current_name}, {params})\n'
+                if current_name else
+                f'{assign_name} = {fn_name}{params}\n'
+            )
+
+        else:
+            Refactoring.output_text += (
+                f'{assign_name} = {current_name}.{fn_name}{params}\n'
+                if current_name else
+                f'{assign_name} = {fn_name}{params}\n'
+            )
 
     @staticmethod
     def get_assign_name(df):
