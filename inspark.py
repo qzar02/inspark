@@ -1,10 +1,12 @@
+import re
+
+from pyspark.sql import SparkSession
 from pyspark.sql import functions as f
-from pyspark.sql.dataframe import DataFrame
 from pyspark.sql.column import Column
+from pyspark.sql.dataframe import DataFrame
 from pyspark.sql.group import GroupedData
 from pyspark.sql.readwriter import DataFrameReader, DataFrameWriter
-from pyspark.sql import SparkSession
-import re
+
 spark = (
         SparkSession
         .builder
@@ -92,7 +94,20 @@ class DataFrameReaderMock:
             None,
             'read.load',
             format_params(args, kwargs))
-        return spark.createDataFrame([], schema='a int').set_name(assign_name)
+
+        schema = spark.read.o_load(*args, **kwargs).schema
+        return spark.createDataFrame([], schema=schema).set_name(assign_name)
+
+    def csv(self, *args, **kwargs):
+        assign_name = Refactoring.next_assign_name()
+        Refactoring.new_line(
+            assign_name,
+            None,
+            'read.csv',
+            format_params(args, kwargs))
+
+        schema = spark.read.o_csv(*args, **kwargs).schema
+        return spark.createDataFrame([], schema=schema).set_name(assign_name)
 
 
 class DataFrameWriterMock:
@@ -246,7 +261,7 @@ class Refactoring:
 
             new_df = (
                 spark
-                .createDataFrame([], schema='a int')
+                .createDataFrame([], schema=_self.schema)
                 .set_name(assign_name))
 
             return new_df
@@ -286,6 +301,9 @@ class Refactoring:
         DataFrameReader.o_load = DataFrameReader.load
         DataFrameReader.load = DataFrameReaderMock.load
 
+        DataFrameReader.o_csv = DataFrameReader.csv
+        DataFrameReader.csv = DataFrameReaderMock.csv
+
         DataFrameWriter.o_save = DataFrameWriter.save
         DataFrameWriter.save = DataFrameWriterMock.save
 
@@ -308,8 +326,8 @@ class Refactoring:
 
         return GraphCutBranches(graph)
 
-    def print_line_header(self, assign_name, current_name, fn_name, params):
-        print(
+    def line_header(self, assign_name, current_name, fn_name, params):
+        return (
             f'{assign_name} = (\n' +
             (
                 f'  {current_name}.{fn_name}{params}'
@@ -326,20 +344,22 @@ class Refactoring:
         self.graph.cut_branches()
 
         nodes = self.nodes()
-
+        code = ""
         for cluster in self.graph.sorted():
 
             first_node = nodes[cluster[0]]
 
-            self.print_line_header(
+            code += self.line_header(
                 assign_name=cluster[-1],
                 current_name=first_node.current_name,
                 fn_name=first_node.fn_name,
                 params=first_node.params
-            )
+            ) + '\n'
 
             for node_key in cluster[1:]:
                 node = nodes[node_key]
-                print(f'  .{node.fn_name}{node.params}')
+                code += f'  .{node.fn_name}{node.params}\n'
 
-            print(')')
+            code += ')\n'
+
+        return code
